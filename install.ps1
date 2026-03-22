@@ -4,11 +4,12 @@ $Repo = "sevk-io/sevk-cli"
 $InstallDir = if ($env:SEVK_INSTALL) { "$env:SEVK_INSTALL\bin" } else { "$env:USERPROFILE\.sevk\bin" }
 
 function Get-Arch {
-    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-    switch ($arch) {
-        "X64"   { return "x64" }
-        "Arm64" { return "arm64" }
-        default { Write-Error "Unsupported architecture: $arch"; exit 1 }
+    $envArch = $env:PROCESSOR_ARCHITECTURE
+    switch ($envArch) {
+        "AMD64" { return "x64" }
+        "ARM64" { return "arm64" }
+        "x86"   { return "x64" }
+        default { Write-Error "Unsupported architecture: $envArch"; exit 1 }
     }
 }
 
