@@ -1,0 +1,43 @@
+{
+  "name": "sevk-cli",
+  "version": "1.0.0",
+  "description": "Command-line interface for the Sevk email platform",
+  "type": "module",
+  "license": "MIT",
+  "author": "Sevk <dev@sevk.io>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sevk-io/sevk-cli"
+  },
+  "homepage": "https://sevk.io",
+  "keywords": [
+    "sevk",
+    "email",
+    "cli",
+    "api"
+  ],
+  "bin": {
+    "sevk": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "dev": "bun run src/cli.ts",
+    "build": "bun build src/cli.ts --outdir dist --target node --minify",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.1.0",
+    "citty": "^0.1.6",
+    "picocolors": "^1.1.1",
+    "sevk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  }
+}
