@@ -19,8 +19,6 @@ jobs:
             target: linux-arm64
           - os: macos-latest
             target: darwin-arm64
-          - os: macos-13
-            target: darwin-x64
           - os: windows-latest
             target: win32-x64
 
@@ -78,7 +76,6 @@ jobs:
             sevk-linux-x64.tar.gz
             sevk-linux-arm64.tar.gz
             sevk-darwin-arm64.tar.gz
-            sevk-darwin-x64.tar.gz
             sevk-win32-x64.zip
           generate_release_notes: true
 
