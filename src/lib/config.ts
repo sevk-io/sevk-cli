@@ -1,5 +1,12 @@
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  writeFile
+} from 'node:fs/promises'
 import { join } from 'node:path'
-import { readFile, writeFile, mkdir, chmod, access } from 'node:fs/promises'
 
 interface Profile {
   api_key: string
@@ -13,60 +20,69 @@ interface Config {
 
 const isWindows = process.platform === 'win32'
 
-function getConfigDir(): string {
+const getConfigDir = (): string => {
   const base = process.env.XDG_CONFIG_HOME
     || process.env.APPDATA
     || join(process.env.HOME || process.env.USERPROFILE || '~', '.config')
+
   return join(base, 'sevk')
 }
 
-export function getConfigPath(): string {
+export const getConfigPath = (): string => {
   return join(getConfigDir(), 'credentials.json')
 }
 
-async function ensureConfigDir(): Promise<void> {
+const ensureConfigDir = async (): Promise<void> => {
   const dir = getConfigDir()
+
   await mkdir(dir, { recursive: true })
   if (!isWindows) {
-    try { await chmod(dir, 0o700) } catch {}
+    try {
+      await chmod(dir, 0o700)
+    } catch { /* ignore */ }
   }
 }
 
-async function readConfig(): Promise<Config> {
+const readConfig = async (): Promise<Config> => {
   const path = getConfigPath()
+
   try {
     await access(path)
   } catch {
     return { active_profile: 'default', profiles: {} }
   }
 
+  const raw = await readFile(path, 'utf-8')
+
   try {
-    const raw = await readFile(path, 'utf-8')
     return JSON.parse(raw) as Config
   } catch {
-    return { active_profile: 'default', profiles: {} }
+    throw new Error(`Config file is corrupt: ${path}. Fix it or run \`sevk logout --all\` to reset.`)
   }
 }
 
-async function writeConfig(config: Config): Promise<void> {
+const writeConfig = async (config: Config): Promise<void> => {
   await ensureConfigDir()
   const path = getConfigPath()
-  await writeFile(path, JSON.stringify(config, null, 2), 'utf-8')
-  if (!isWindows) {
-    try { await chmod(path, 0o600) } catch {}
-  }
+  const tmp = `${path}.${process.pid}.tmp`
+
+  await writeFile(tmp, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 })
+  await rename(tmp, path)
 }
 
-export async function resolveApiKey(opts: { apiKey?: string; baseUrl?: string; profile?: string }): Promise<{
+export const resolveApiKey = async (opts: { apiKey?: string, baseUrl?: string, profile?: string }): Promise<{
   key: string
   source: string
   baseUrl?: string
-} | null> {
-  if (opts.apiKey) {
-    return { key: opts.apiKey, source: 'flag', baseUrl: opts.baseUrl }
+} | null> => {
+  if (opts.apiKey !== undefined) {
+    const formatError = validateKeyFormat(opts.apiKey)
+    if (formatError) throw new Error(`Invalid --api-key: ${formatError}`)
+    return { key: opts.apiKey, source: 'flag', baseUrl: opts.baseUrl || process.env.SEVK_BASE_URL }
   }
 
   const envKey = process.env.SEVK_API_KEY
+
   if (envKey) {
     return { key: envKey, source: 'env', baseUrl: opts.baseUrl || process.env.SEVK_BASE_URL }
   }
@@ -79,25 +95,71 @@ export async function resolveApiKey(opts: { apiKey?: string; baseUrl?: string; p
     return {
       key: profile.api_key,
       source: `profile:${profileName}`,
-      baseUrl: opts.baseUrl || profile.base_url,
+      baseUrl: opts.baseUrl || profile.base_url
     }
   }
 
   return null
 }
 
-export function validateKeyFormat(key: string): string | null {
-  if (!key) return 'API key is required'
-  if (!key.startsWith('sevk_')) return 'API key must start with "sevk_"'
-  if (key.length < 10) return 'API key is too short'
+export const validateBaseUrl = (url: string): string | null => {
+  let parsed: URL
+
+  if (url !== url.trim()) {
+    return 'Base URL must not include leading or trailing whitespace'
+  }
+
+  try {
+    parsed = new URL(url)
+  } catch {
+    return 'Invalid URL'
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return 'Base URL must use http:// or https://'
+  }
+
+  if (
+    parsed.protocol === 'http:' &&
+    parsed.hostname !== 'localhost' &&
+    parsed.hostname !== '127.0.0.1' &&
+    parsed.hostname !== '[::1]'
+  ) {
+    return 'Base URL must use HTTPS unless it targets localhost'
+  }
+
+  if (url.includes('?') || url.includes('#')) {
+    return 'Base URL must not include a query string or fragment'
+  }
+
+  if (parsed.username || parsed.password) {
+    return 'Base URL must not include credentials'
+  }
+
   return null
 }
 
-export async function storeApiKey(apiKey: string, profileName?: string, baseUrl?: string): Promise<void> {
+export const validateKeyFormat = (key: string): string | null => {
+  if (!key) {
+    return 'API key is required'
+  }
+
+  if (!key.startsWith('sevk_')) {
+    return 'API key must start with "sevk_"'
+  }
+
+  if (key.length < 10) {
+    return 'API key is too short'
+  }
+
+  return null
+}
+
+export const storeApiKey = async (apiKey: string, profileName?: string, baseUrl?: string): Promise<void> => {
   const config = await readConfig()
   const name = profileName || 'default'
 
-  config.profiles[name] = { api_key: apiKey, base_url: baseUrl }
+  config.profiles[name] = { api_key: apiKey, base_url: baseUrl ?? config.profiles[name]?.base_url }
 
   if (Object.keys(config.profiles).length === 1 || name === 'default') {
     config.active_profile = name
@@ -106,46 +168,60 @@ export async function storeApiKey(apiKey: string, profileName?: string, baseUrl?
   await writeConfig(config)
 }
 
-export async function removeProfile(name: string): Promise<boolean> {
+export const removeProfile = async (name: string): Promise<boolean> => {
   const config = await readConfig()
-  if (!config.profiles[name]) return false
+
+  if (!config.profiles[name]) {
+    return false
+  }
 
   delete config.profiles[name]
 
   if (config.active_profile === name) {
     const remaining = Object.keys(config.profiles)
+
     config.active_profile = remaining[0] || 'default'
   }
 
   await writeConfig(config)
+
   return true
 }
 
-export async function removeAllProfiles(): Promise<void> {
+export const removeAllProfiles = async (): Promise<void> => {
   await writeConfig({ active_profile: 'default', profiles: {} })
 }
 
-export async function setActiveProfile(name: string): Promise<boolean> {
+export const setActiveProfile = async (name: string): Promise<boolean> => {
   const config = await readConfig()
-  if (!config.profiles[name]) return false
+
+  if (!config.profiles[name]) {
+    return false
+  }
+
   config.active_profile = name
   await writeConfig(config)
+
   return true
 }
 
-export async function listProfiles(): Promise<{ name: string; active: boolean; baseUrl?: string }[]> {
+export const listProfiles = async (): Promise<{ name: string, active: boolean, baseUrl?: string }[]> => {
   const config = await readConfig()
+
   return Object.entries(config.profiles).map(([name, profile]) => ({
     name,
     active: name === config.active_profile,
-    baseUrl: profile.base_url,
+    baseUrl: profile.base_url
   }))
 }
 
-export async function updateProfileBaseUrl(profileName: string, baseUrl: string | null): Promise<boolean> {
+export const updateProfileBaseUrl = async (profileName: string, baseUrl: string | null): Promise<boolean> => {
   const config = await readConfig()
   const name = profileName || config.active_profile
-  if (!config.profiles[name]) return false
+
+  if (!config.profiles[name]) {
+    return false
+  }
 
   if (baseUrl === null) {
     delete config.profiles[name].base_url
@@ -154,19 +230,27 @@ export async function updateProfileBaseUrl(profileName: string, baseUrl: string 
   }
 
   await writeConfig(config)
+
   return true
 }
 
-export async function getProfileBaseUrl(profileName?: string): Promise<string | undefined> {
+export const getProfileBaseUrl = async (profileName?: string): Promise<string | undefined> => {
   const config = await readConfig()
   const name = profileName || config.active_profile
+
   return config.profiles[name]?.base_url
 }
 
-export async function renameProfile(oldName: string, newName: string): Promise<boolean> {
+export const renameProfile = async (oldName: string, newName: string): Promise<boolean> => {
   const config = await readConfig()
-  if (!config.profiles[oldName]) return false
-  if (config.profiles[newName]) return false
+
+  if (!config.profiles[oldName]) {
+    return false
+  }
+
+  if (config.profiles[newName]) {
+    return false
+  }
 
   config.profiles[newName] = config.profiles[oldName]
   delete config.profiles[oldName]
@@ -176,10 +260,14 @@ export async function renameProfile(oldName: string, newName: string): Promise<b
   }
 
   await writeConfig(config)
+
   return true
 }
 
-export function maskKey(key: string): string {
-  if (key.length <= 10) return '***'
+export const maskKey = (key: string): string => {
+  if (key.length <= 10) {
+    return '***'
+  }
+
   return `${key.slice(0, 6)}...${key.slice(-4)}`
 }

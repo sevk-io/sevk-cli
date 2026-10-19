@@ -1,30 +1,35 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, json, success } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, success, error } from '~/lib/output'
 
 export default defineCommand({
   meta: { name: 'delete', description: 'Delete a webhook' },
   args: {
     ...globalArgs,
-    id: { type: 'positional', description: 'Webhook ID', required: true },
+    id: { type: 'positional', description: 'Webhook ID', required: true }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
 
     try {
-      await withSpinner(
+      const result = await withSpinner(
         { start: 'Deleting webhook...', success: 'Webhook deleted' },
-        () => client.delete<any>(`/webhooks/${args.id}`),
+        () => client.delete<{ id: string, deleted: true }>(`/webhooks/${args.id}`)
       )
 
       if (isJsonOutput(args)) {
-        json({ deleted: true, id: args.id })
+        json(result ?? { id: args.id, deleted: true })
+      } else {
+        success('Webhook deleted')
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

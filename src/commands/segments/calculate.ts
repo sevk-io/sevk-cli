@@ -1,15 +1,22 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, json, success } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, success, error } from '~/lib/output'
+
+interface CalculateResponse {
+  count: number
+  segmentId: string
+  segmentName: string
+  lastRunAt: string
+}
 
 export default defineCommand({
   meta: { name: 'calculate', description: 'Calculate segment size' },
   args: {
     ...globalArgs,
-    'audience-id': { type: 'string', description: 'Audience ID', required: true },
-    id: { type: 'positional', description: 'Segment ID', required: true },
+    id: { type: 'positional', description: 'Segment ID', required: true }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
@@ -17,17 +24,19 @@ export default defineCommand({
     try {
       const result = await withSpinner(
         { start: 'Calculating segment size...' },
-        () => client.get<any>(`/audiences/${args['audience-id']}/segments/${args.id}/calculate`),
+        () => client.get<CalculateResponse>(`/segments/${args.id}/calculate`)
       )
 
       if (isJsonOutput(args)) {
         json(result)
       } else {
-        success(`Segment contains ${result.count ?? result.total ?? JSON.stringify(result)} contacts`)
+        success(`Segment "${result.segmentName}" contains ${result.count} contacts`)
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

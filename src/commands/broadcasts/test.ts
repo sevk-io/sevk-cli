@@ -1,17 +1,36 @@
-import { defineCommand } from 'citty'
 import * as p from '@clack/prompts'
+import { defineCommand } from 'citty'
 import pc from 'picocolors'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { validateIdempotencyKey } from '~/lib/idempotency-key'
+import {
+  error,
+  isInteractive,
+  json,
+  success
+} from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, success, error, isInteractive } from '~/lib/output'
+
+interface BroadcastSummary {
+  id: string
+  name?: string | null
+  subject?: string | null
+  status: string
+}
+
+interface ListResponse {
+  items: BroadcastSummary[]
+}
 
 export default defineCommand({
   meta: { name: 'test', description: 'Send a test email for a broadcast' },
   args: {
     ...globalArgs,
     id: { type: 'positional', description: 'Broadcast ID', required: false },
-    to: { type: 'string', description: 'Test recipient email' },
+    'idempotency-key': { type: 'string', description: 'Stable retry key for queue recovery' },
+    to: { type: 'string', description: 'Test recipient email(s), comma-separated (max 10)' }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
@@ -19,71 +38,101 @@ export default defineCommand({
     let to = args.to
 
     if (isInteractive()) {
-      // Pick broadcast if no ID
       if (!id) {
-        let broadcasts: any[] = []
+        let broadcasts: BroadcastSummary[] = []
+
         try {
           const result = await withSpinner(
             { start: 'Loading broadcasts...' },
-            () => client.get<any>('/broadcasts'),
+            () => client.get<ListResponse>('/broadcasts')
           )
-          const all = result.items || result
-          broadcasts = Array.isArray(all) ? all : []
-        } catch {}
+
+          broadcasts = result.items
+        } catch { /* ignore */ }
 
         if (broadcasts.length === 0) {
           error('No broadcasts found.')
-          process.exitCode = 1; return
+          process.exitCode = 1
+
+          return
         }
 
         const result = await p.select({
           message: 'Select broadcast',
-          options: broadcasts.map((b: any) => ({
+          options: broadcasts.map((b) => ({
             value: b.id,
             label: `${b.name || b.subject}`,
-            hint: pc.dim(`${b.status}`),
-          })),
+            hint: pc.dim(`${b.status}`)
+          }))
         })
-        if (p.isCancel(result)) return
+
+        if (p.isCancel(result)) {
+          return
+        }
+
         id = result as string
       }
 
-      // Pick recipient
       if (!to) {
         const result = await p.text({
           message: 'Send test to',
           placeholder: 'you@example.com',
-          validate: (v) => (!v ? 'Required' : undefined),
+          validate: (v) => (!v ? 'Required' : undefined)
         })
-        if (p.isCancel(result)) return
+
+        if (p.isCancel(result)) {
+          return
+        }
+
         to = result
       }
     }
 
     if (!id) {
       error('Broadcast ID is required.')
-      process.exitCode = 1; return
+      process.exitCode = 1
+
+      return
     }
 
     if (!to) {
       error('Recipient is required. Use --to.')
-      process.exitCode = 1; return
+      process.exitCode = 1
+
+      return
     }
+
+    const emails = to.split(',').map((s) => s.trim()).filter(Boolean)
+    if (emails.length < 1 || emails.length > 10) {
+      error('Test recipients must contain between 1 and 10 email addresses.')
+      process.exitCode = 1
+
+      return
+    }
+    const idempotencyKey = validateIdempotencyKey(args['idempotency-key'])
 
     try {
       const result = await withSpinner(
-        { start: 'Sending test email...', success: 'Test email sent' },
-        () => client.post<any>(`/broadcasts/${id}/test`, { to }),
+        { start: 'Queueing test emails...', success: 'Test emails queued' },
+        () => client.post<{ testEmails: number, message: string }>(
+          `/broadcasts/${id}/test`,
+          { emails },
+          idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined
+        )
       )
 
       if (isJsonOutput(args)) {
         json(result)
       } else {
-        success(`Test email sent to ${to}`)
+        const count = result?.testEmails ?? emails.length
+
+        success(`${count} test email${count === 1 ? '' : 's'} queued for ${emails.join(', ')}`)
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

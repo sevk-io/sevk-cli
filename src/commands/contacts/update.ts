@@ -1,8 +1,10 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { assertJsonObject, type JsonObject } from '~/lib/json-input'
+import { error, json, success } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, success, error } from '~/lib/output'
 
 export default defineCommand({
   meta: { name: 'update', description: 'Update a contact' },
@@ -12,25 +14,55 @@ export default defineCommand({
     email: { type: 'string', description: 'New email' },
     'first-name': { type: 'string', description: 'First name' },
     'last-name': { type: 'string', description: 'Last name' },
-    subscribed: { type: 'boolean', description: 'Subscription status' },
+    'data-json': { type: 'string', description: 'Exact metadata object or null as JSON' },
+    subscribed: { type: 'boolean', description: 'Subscription status' }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
-    const body: Record<string, any> = {}
-    if (args.email) body.email = args.email
-    if (args['first-name']) body.firstName = args['first-name']
-    if (args['last-name']) body.lastName = args['last-name']
-    if (args.subscribed !== undefined) body.subscribed = args.subscribed
+    const body: Record<string, unknown> = {}
 
-    if (Object.keys(body).length === 0) {
-      error('Nothing to update. Provide at least one field.')
-      process.exitCode = 1; return
+    if (args.email !== undefined) {
+      body.email = args.email
+    }
+
+    if (args.subscribed !== undefined) {
+      body.subscribed = args.subscribed
+    }
+
+    if (args['data-json'] !== undefined) {
+      try {
+        const parsed: unknown = JSON.parse(String(args['data-json']))
+        const data: JsonObject | null = parsed === null
+          ? null
+          : assertJsonObject(parsed, '--data-json')
+
+        body.data = data
+      } catch {
+        error('Invalid --data-json. Use a JSON object or null.')
+        process.exitCode = 1
+
+        return
+      }
+    } else {
+      const data: Record<string, unknown> = {}
+
+      if (args['first-name'] !== undefined) {
+        data.firstName = String(args['first-name'])
+      }
+
+      if (args['last-name'] !== undefined) {
+        data.lastName = String(args['last-name'])
+      }
+
+      if (Object.keys(data).length > 0) {
+        body.data = data
+      }
     }
 
     try {
       const contact = await withSpinner(
         { start: 'Updating contact...', success: 'Contact updated' },
-        () => client.put<any>(`/contacts/${args.id}`, body),
+        () => client.put(`/contacts/${args.id}`, body)
       )
 
       if (isJsonOutput(args)) {
@@ -38,9 +70,11 @@ export default defineCommand({
       } else {
         success('Contact updated')
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

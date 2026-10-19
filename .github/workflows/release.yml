@@ -27,27 +27,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Check dependency lockfile
+        shell: bash
+        run: test -f bun.lock
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
+
+      - name: Verify release version
+        shell: bash
+        run: |
+          package_version=$(node -p "require('./package.json').version")
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$package_version" != "$tag_version" ]; then
+            echo "package.json version $package_version does not match tag $tag_version" >&2
+            exit 1
+          fi
 
       - name: Build
         run: bun run build
 
+      - name: Test
+        run: bun run test
+
+      - name: Typecheck
+        run: bun run typecheck
+
       - name: Package (Unix)
         if: matrix.target != 'win32-x64'
         run: |
-          cp dist/cli.js sevk
-          chmod +x sevk
-          tar -czf sevk-${{ matrix.target }}.tar.gz sevk
+          mkdir release
+          cp dist/cli.js release/sevk
+          cp LICENSE THIRD_PARTY_LICENSES.txt release/
+          printf '{"type":"module"}\n' > release/package.json
+          chmod +x release/sevk
+          tar -czf sevk-${{ matrix.target }}.tar.gz -C release sevk LICENSE THIRD_PARTY_LICENSES.txt package.json
 
       - name: Package (Windows)
         if: matrix.target == 'win32-x64'
         shell: pwsh
         run: |
-          Copy-Item dist/cli.js sevk.js
-          Set-Content -Path sevk.cmd -Value '@node "%~dp0sevk.js" %*'
-          Compress-Archive -Path sevk.js, sevk.cmd -DestinationPath sevk-${{ matrix.target }}.zip
+          New-Item -ItemType Directory -Path release | Out-Null
+          Copy-Item dist/cli.js release/sevk.js
+          Copy-Item LICENSE, THIRD_PARTY_LICENSES.txt release/
+          Set-Content -Path release/sevk.cmd -Value '@node "%~dp0sevk.js" %*'
+          Set-Content -Path release/package.json -Value '{"type":"module"}'
+          Compress-Archive -Path release/sevk.js, release/sevk.cmd, release/LICENSE, release/THIRD_PARTY_LICENSES.txt, release/package.json -DestinationPath sevk-${{ matrix.target }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -67,6 +95,9 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Generate release checksums
+        run: sha256sum sevk-*.tar.gz sevk-*.zip > SHA256SUMS
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -77,4 +108,5 @@ jobs:
             sevk-linux-arm64.tar.gz
             sevk-darwin-arm64.tar.gz
             sevk-win32-x64.zip
+            SHA256SUMS
           generate_release_notes: true

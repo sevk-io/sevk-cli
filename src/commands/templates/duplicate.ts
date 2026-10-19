@@ -1,14 +1,24 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, json, success } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, success, error } from '~/lib/output'
+
+interface Template {
+  id: string
+  title: string
+  content: string
+  style: string
+  createdAt: string
+  updatedAt: string
+}
 
 export default defineCommand({
   meta: { name: 'duplicate', description: 'Duplicate a template' },
   args: {
     ...globalArgs,
-    id: { type: 'positional', description: 'Template ID to duplicate', required: true },
+    id: { type: 'positional', description: 'Template ID to duplicate', required: true }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
@@ -16,7 +26,7 @@ export default defineCommand({
     try {
       const template = await withSpinner(
         { start: 'Duplicating template...', success: 'Template duplicated' },
-        () => client.post<any>(`/templates/${args.id}/duplicate`),
+        () => client.post<Template>(`/templates/${args.id}/duplicate`)
       )
 
       if (isJsonOutput(args)) {
@@ -24,9 +34,11 @@ export default defineCommand({
       } else {
         success(`Template duplicated (${template.id})`)
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

@@ -1,16 +1,35 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
-import { createClient } from '~/lib/client'
-import { withSpinner } from '~/lib/spinner'
-import { json, error } from '~/lib/output'
-import { keyValue, table } from '~/lib/table'
 import pc from 'picocolors'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
+import { createClient } from '~/lib/client'
+import { error, json } from '~/lib/output'
+import { withSpinner } from '~/lib/spinner'
+import { keyValue, table } from '~/lib/table'
+
+interface Domain {
+  id: string
+  domain: string
+  email: string
+  senderName?: string | null
+  region: string
+  verified?: boolean
+  verificationToken?: string
+  clickTracking?: boolean
+  openTracking?: boolean
+  tlsPolicy?: string | null
+  inboundEnabled?: boolean
+  inboundVerified?: boolean
+  inboundPrefix: string
+  createdAt: string
+  dnsRecords?: { type: string, name: string, value: string }[]
+}
 
 export default defineCommand({
   meta: { name: 'get', description: 'Get domain details and DNS records' },
   args: {
     ...globalArgs,
-    id: { type: 'positional', description: 'Domain ID', required: true },
+    id: { type: 'positional', description: 'Domain ID', required: true }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
@@ -18,11 +37,14 @@ export default defineCommand({
     try {
       const domain = await withSpinner(
         { start: 'Fetching domain...' },
-        () => client.get<any>(`/domains/${args.id}`),
+        () => client.get<Domain>(`/domains/${args.id}`)
       )
+
+      const dnsRecords: Array<{ type: string, name: string, value: string }> = domain.dnsRecords || []
 
       if (isJsonOutput(args)) {
         json(domain)
+
         return
       }
 
@@ -30,25 +52,32 @@ export default defineCommand({
       keyValue([
         ['ID', domain.id],
         ['Domain', domain.domain],
+        ['Email', domain.email],
+        ['Sender name', domain.senderName || '-'],
+        ['Region', domain.region],
         ['Verified', domain.verified ? pc.green('Yes') : pc.red('No')],
-        ['Region', domain.region || '—'],
-        ['Created', new Date(domain.createdAt).toLocaleString()],
+        ['Click tracking', domain.clickTracking ? pc.green('On') : pc.dim('Off')],
+        ['Open tracking', domain.openTracking ? pc.green('On') : pc.dim('Off')],
+        ['TLS policy', domain.tlsPolicy || 'OPTIONAL'],
+        ['Inbound prefix', domain.inboundPrefix || '(none)'],
+        ['Inbound enabled', domain.inboundEnabled ? pc.green('Yes') : pc.red('No')],
+        ['Inbound verified', domain.inboundVerified ? pc.green('Yes') : pc.red('No')],
+        ['Created', new Date(domain.createdAt).toLocaleString()]
       ])
 
-      if (domain.dnsRecords?.length) {
-        console.log()
-        console.log(pc.bold('DNS Records:'))
-        table(domain.dnsRecords, [
-          { key: 'type', label: 'Type' },
-          { key: 'name', label: 'Name' },
-          { key: 'value', label: 'Value' },
-          { key: 'priority', label: 'Priority', format: (v: any) => v != null ? String(v) : '—' },
-        ])
-      }
       console.log()
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+      console.log(pc.bold('DNS records'))
+      table(dnsRecords, [
+        { key: 'type', label: 'Type' },
+        { key: 'name', label: 'Name' },
+        { key: 'value', label: 'Value' }
+      ])
+      console.log()
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

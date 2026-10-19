@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://sevk.io/logo.png" alt="Sevk" width="120" />
+  <img src="https://sevk.io/logo.png" alt="sevk" width="120" />
 </p>
 
-<h1 align="center">Sevk CLI</h1>
+<h1 align="center">sevk CLI</h1>
 
 <p align="center">
   Manage your email infrastructure from the terminal.
@@ -42,7 +42,7 @@ sevk login
 sevk emails send \
   --from "you@yourdomain.com" \
   --to recipient@example.com \
-  --subject "Hello from Sevk" \
+  --subject "Hello from sevk" \
   --text "Sent from my terminal."
 
 # Check your environment

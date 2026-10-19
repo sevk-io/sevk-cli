@@ -1,21 +1,34 @@
-import { defineCommand } from 'citty'
 import * as p from '@clack/prompts'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+import { defineCommand } from 'citty'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import {
+  error,
+  isInteractive,
+  json,
+  success
+} from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, success, error, isInteractive } from '~/lib/output'
+
+interface CancelResponse {
+  cancelledJobs?: number | null
+}
 
 export default defineCommand({
-  meta: { name: 'cancel', description: 'Cancel a scheduled broadcast' },
+  meta: { name: 'cancel', description: 'Cancel a scheduled, starting, or sending broadcast' },
   args: {
     ...globalArgs,
     id: { type: 'positional', description: 'Broadcast ID', required: true },
-    yes: { type: 'boolean', alias: 'y', description: 'Skip confirmation' },
+    yes: { type: 'boolean', alias: 'y', description: 'Skip confirmation' }
   },
   async run({ args }) {
     if (!args.yes && isInteractive()) {
       const confirm = await p.confirm({ message: `Cancel broadcast ${args.id}?` })
-      if (p.isCancel(confirm) || !confirm) return
+
+      if (p.isCancel(confirm) || !confirm) {
+        return
+      }
     }
 
     const client = await createClient(getClientOpts(args))
@@ -23,17 +36,24 @@ export default defineCommand({
     try {
       const result = await withSpinner(
         { start: 'Cancelling broadcast...', success: 'Broadcast cancelled' },
-        () => client.post<any>(`/broadcasts/${args.id}/cancel`),
+        () => client.post<CancelResponse>(`/broadcasts/${args.id}/cancel`)
       )
 
       if (isJsonOutput(args)) {
         json(result)
       } else {
-        success('Broadcast cancelled')
+        const cancelledJobs = result?.cancelledJobs ?? 0
+        const drainedNote = cancelledJobs > 0
+          ? `, ${cancelledJobs.toLocaleString()} queued jobs drained`
+          : ''
+
+        success(`Status: CANCELLING${drainedNote}. Final CANCELLED status posts asynchronously after background cleanup.`)
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

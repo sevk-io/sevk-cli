@@ -1,8 +1,16 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { parseEnumFlag } from '~/lib/enum-flag'
+import { error, json, success } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, success, error } from '~/lib/output'
+
+interface Audience {
+  id: string
+}
+
+const VISIBILITIES = ['PUBLIC', 'PRIVATE'] as const
 
 export default defineCommand({
   meta: { name: 'update', description: 'Update an audience' },
@@ -10,11 +18,35 @@ export default defineCommand({
     ...globalArgs,
     id: { type: 'positional', description: 'Audience ID', required: true },
     name: { type: 'string', description: 'New name' },
+    description: { type: 'string', description: 'New description' },
+    'visibility': { type: 'string', description: 'Visibility: PUBLIC or PRIVATE' }
   },
   async run({ args }) {
-    if (!args.name) {
-      error('Provide --name to update.')
-      process.exitCode = 1; return
+    let visibility: typeof VISIBILITIES[number] | undefined
+
+    try {
+      visibility = parseEnumFlag(args.visibility, '--visibility', VISIBILITIES, {
+        uppercase: true
+      })
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
+    }
+
+    const body: Record<string, string | number | boolean | undefined> = {}
+
+    if (args.name !== undefined) {
+      body.name = args.name
+    }
+
+    if (args.description !== undefined) {
+      body.description = args.description
+    }
+
+    if (visibility) {
+      body.visibility = visibility
     }
 
     const client = await createClient(getClientOpts(args))
@@ -22,7 +54,7 @@ export default defineCommand({
     try {
       const audience = await withSpinner(
         { start: 'Updating audience...', success: 'Audience updated' },
-        () => client.put<any>(`/audiences/${args.id}`, { name: args.name }),
+        () => client.put<Audience>(`/audiences/${args.id}`, body)
       )
 
       if (isJsonOutput(args)) {
@@ -30,9 +62,11 @@ export default defineCommand({
       } else {
         success('Audience updated')
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

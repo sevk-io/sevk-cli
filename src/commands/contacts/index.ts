@@ -1,12 +1,13 @@
 import { defineCommand } from 'citty'
-import list from './list'
-import create from './create'
-import get from './get'
-import update from './update'
-import del from './delete'
-import events from './events'
-import importCmd from './import'
+
+import activity from './activity'
 import bulkUpdate from './bulk-update'
+import create from './create'
+import del from './delete'
+import get from './get'
+import bulkImport from './import'
+import list from './list'
+import update from './update'
 
 export default defineCommand({
   meta: { name: 'contacts', description: 'Manage contacts' },
@@ -16,8 +17,8 @@ export default defineCommand({
     get,
     update,
     delete: del,
-    events,
-    import: importCmd,
-    'bulk-update': bulkUpdate,
-  },
+    activity,
+    'bulk-import': bulkImport,
+    'bulk-update': bulkUpdate
+  }
 })

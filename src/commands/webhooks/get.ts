@@ -1,15 +1,31 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, json } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, error } from '~/lib/output'
 import { keyValue } from '~/lib/table'
+
+interface Webhook {
+  id: string
+  url: string
+  events: string[]
+  enabled: boolean
+  secret: string | null
+  failureCount: number
+  lastFailureAt: string | null
+  lastDeliveryAt: string | null
+  disabledAt: string | null
+  projectId: string
+  createdAt: string
+  updatedAt: string
+}
 
 export default defineCommand({
   meta: { name: 'get', description: 'Get a webhook' },
   args: {
     ...globalArgs,
-    id: { type: 'positional', description: 'Webhook ID', required: true },
+    id: { type: 'positional', description: 'Webhook ID', required: true }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
@@ -17,25 +33,47 @@ export default defineCommand({
     try {
       const webhook = await withSpinner(
         { start: 'Fetching webhook...' },
-        () => client.get<any>(`/webhooks/${args.id}`),
+        () => client.get<Webhook>(`/webhooks/${args.id}`)
       )
 
       if (isJsonOutput(args)) {
         json(webhook)
       } else {
-        console.log()
-        keyValue([
+        const fmtDate = (v: string | null | undefined) => (v ? new Date(v).toLocaleString() : '-')
+        const rows: [string, string][] = [
           ['ID', webhook.id],
           ['URL', webhook.url],
-          ['Events', Array.isArray(webhook.events) ? webhook.events.join(', ') : '—'],
-          ['Enabled', webhook.enabled ? 'Yes' : 'No'],
-          ['Created', webhook.createdAt ? new Date(webhook.createdAt).toLocaleString() : '—'],
-        ])
+          ['Events', Array.isArray(webhook.events) ? webhook.events.join(', ') : '-'],
+          ['Enabled', webhook.enabled ? 'Yes' : 'No']
+        ]
+
+        if (webhook.failureCount !== undefined && webhook.failureCount !== null) {
+          rows.push(['Failure count', String(webhook.failureCount)])
+        }
+
+        if ('lastFailureAt' in webhook) {
+          rows.push(['Last failure', fmtDate(webhook.lastFailureAt)])
+        }
+
+        if ('lastDeliveryAt' in webhook) {
+          rows.push(['Last delivery', fmtDate(webhook.lastDeliveryAt)])
+        }
+
+        if ('disabledAt' in webhook) {
+          rows.push(['Disabled at', fmtDate(webhook.disabledAt)])
+        }
+
+        rows.push(['Created', fmtDate(webhook.createdAt)])
+
+        console.log()
+        keyValue(rows)
         console.log()
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

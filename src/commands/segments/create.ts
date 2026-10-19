@@ -1,37 +1,71 @@
+import { readFile } from 'node:fs/promises'
+
 import { defineCommand } from 'citty'
-import * as p from '@clack/prompts'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, json, success } from '~/lib/output'
+import {
+  parseSegmentDefinition,
+  type SegmentDefinition
+} from '~/lib/segment-input'
 import { withSpinner } from '~/lib/spinner'
-import { json, success, error, isInteractive } from '~/lib/output'
+
+interface Segment {
+  id: string
+}
 
 export default defineCommand({
-  meta: { name: 'create', description: 'Create a segment' },
+  meta: { name: 'create', description: 'Create a segment from a JSON rules file' },
   args: {
     ...globalArgs,
     'audience-id': { type: 'string', description: 'Audience ID', required: true },
-    name: { type: 'string', description: 'Segment name' },
+    name: { type: 'string', description: 'Segment name', required: true },
+    file: { type: 'string', description: 'JSON file containing rules and operator (and optional limitToTopics, groups)' },
+    operator: { type: 'string', description: 'Top-level operator: AND or OR (default: AND, ignored when --file is given)' }
   },
   async run({ args }) {
-    let name = args.name
+    let definition: SegmentDefinition
 
-    if (!name && isInteractive()) {
-      const result = await p.text({ message: 'Segment name', validate: (v) => (!v ? 'Required' : undefined) })
-      if (p.isCancel(result)) return
-      name = result
-    }
+    if (args.file) {
+      try {
+        const raw = await readFile(args.file, 'utf-8')
+        definition = parseSegmentDefinition(
+          JSON.parse(raw),
+          true
+        ) as SegmentDefinition
+      } catch (err: unknown) {
+        error(`Cannot read or parse file: ${err instanceof Error ? err.message : String(err)}`)
+        process.exitCode = 1
 
-    if (!name) {
-      error('Name is required. Use --name.')
-      process.exitCode = 1; return
+        return
+      }
+    } else {
+      const operator = (args.operator ?? 'AND').toUpperCase()
+      if (operator !== 'AND' && operator !== 'OR') {
+        error('--operator must be AND or OR')
+        process.exitCode = 1
+
+        return
+      }
+      definition = { rules: [], operator }
     }
 
     const client = await createClient(getClientOpts(args))
+    const payload = {
+      name: args.name,
+      rules: definition.rules,
+      operator: definition.operator,
+      ...(definition.limitToTopics
+        ? { limitToTopics: definition.limitToTopics }
+        : {}),
+      ...(definition.groups ? { groups: definition.groups } : {})
+    }
 
     try {
       const segment = await withSpinner(
         { start: 'Creating segment...', success: 'Segment created' },
-        () => client.post<any>(`/audiences/${args['audience-id']}/segments`, { name }),
+        () => client.post<Segment>(`/audiences/${args['audience-id']}/segments`, payload)
       )
 
       if (isJsonOutput(args)) {
@@ -39,9 +73,11 @@ export default defineCommand({
       } else {
         success(`Segment created (${segment.id})`)
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

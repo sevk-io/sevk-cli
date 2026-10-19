@@ -1,12 +1,13 @@
 import { defineCommand } from 'citty'
-import list from './list'
-import create from './create'
-import get from './get'
-import update from './update'
-import del from './delete'
-import listContacts from './list-contacts'
+
 import addContact from './add-contact'
+import create from './create'
+import del from './delete'
+import get from './get'
+import list from './list'
+import listContacts from './list-contacts'
 import removeContact from './remove-contact'
+import update from './update'
 
 export default defineCommand({
   meta: { name: 'audiences', description: 'Manage audiences' },
@@ -18,6 +19,6 @@ export default defineCommand({
     delete: del,
     'list-contacts': listContacts,
     'add-contact': addContact,
-    'remove-contact': removeContact,
-  },
+    'remove-contact': removeContact
+  }
 })

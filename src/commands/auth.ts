@@ -1,14 +1,26 @@
-import { defineCommand } from 'citty'
 import * as p from '@clack/prompts'
-import { listProfiles, setActiveProfile, removeProfile, renameProfile, maskKey } from '~/lib/config'
-import { success, error, json, shouldOutputJson } from '~/lib/output'
-import { table } from '~/lib/table'
+import { defineCommand } from 'citty'
 import pc from 'picocolors'
+
+import {
+  listProfiles,
+  removeProfile,
+  renameProfile,
+  setActiveProfile
+} from '~/lib/config'
+import {
+  error,
+  isInteractive,
+  json,
+  shouldOutputJson,
+  success
+} from '~/lib/output'
+import { table } from '~/lib/table'
 
 const list = defineCommand({
   meta: { name: 'list', description: 'List all saved profiles' },
   args: {
-    json: { type: 'boolean', description: 'Output as JSON' },
+    json: { type: 'boolean', description: 'Output as JSON' }
   },
   async run({ args }) {
     const profiles = await listProfiles()
@@ -19,36 +31,48 @@ const list = defineCommand({
       } else {
         console.log('No profiles found. Run `sevk login` to add one.')
       }
+
       return
     }
 
     if (shouldOutputJson(args)) {
       json(profiles)
+
       return
     }
 
     table(profiles, [
       { key: 'name', label: 'Profile' },
       { key: 'active', label: 'Active', format: (v: boolean) => (v ? pc.green('●') : pc.dim('○')) },
-      { key: 'baseUrl', label: 'Base URL', format: (v: string) => v || pc.dim('default') },
+      { key: 'baseUrl', label: 'Base URL', format: (v: string) => v || pc.dim('default') }
     ])
-  },
+  }
 })
 
 const switchProfile = defineCommand({
   meta: { name: 'switch', description: 'Switch active profile' },
   args: {
     name: { type: 'positional', description: 'Profile to activate', required: false },
-    json: { type: 'boolean', description: 'Output as JSON' },
+    json: { type: 'boolean', description: 'Output as JSON' }
   },
   async run({ args }) {
     let name = args.name
 
     if (!name) {
       const profiles = await listProfiles()
+
       if (profiles.length === 0) {
         error('No profiles found.')
-        process.exitCode = 1; return
+        process.exitCode = 1
+
+        return
+      }
+
+      if (!isInteractive()) {
+        error('Profile name is required in non-interactive mode.')
+        process.exitCode = 1
+
+        return
       }
 
       const result = await p.select({
@@ -56,11 +80,14 @@ const switchProfile = defineCommand({
         options: profiles.map((pr) => ({
           value: pr.name,
           label: pr.name,
-          hint: pr.active ? 'current' : undefined,
-        })),
+          hint: pr.active ? 'current' : undefined
+        }))
       })
 
-      if (p.isCancel(result)) return
+      if (p.isCancel(result)) {
+        return
+      }
+
       name = result as string
     }
 
@@ -72,9 +99,11 @@ const switchProfile = defineCommand({
       }
     } else {
       error(`Profile "${name}" not found`)
-      process.exitCode = 1; return
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })
 
 const rename = defineCommand({
@@ -82,6 +111,7 @@ const rename = defineCommand({
   args: {
     old: { type: 'positional', description: 'Current profile name', required: false },
     new: { type: 'positional', description: 'New profile name', required: false },
+    json: { type: 'boolean', description: 'Output as JSON' }
   },
   async run({ args }) {
     let oldName = args.old
@@ -89,70 +119,122 @@ const rename = defineCommand({
 
     if (!oldName) {
       const profiles = await listProfiles()
+
       if (profiles.length === 0) {
         error('No profiles found.')
-        process.exitCode = 1; return
+        process.exitCode = 1
+
+        return
+      }
+
+      if (!isInteractive()) {
+        error('Old profile name is required in non-interactive mode.')
+        process.exitCode = 1
+
+        return
       }
 
       const result = await p.select({
         message: 'Select profile to rename',
-        options: profiles.map((pr) => ({ value: pr.name, label: pr.name })),
+        options: profiles.map((pr) => ({ value: pr.name, label: pr.name }))
       })
-      if (p.isCancel(result)) return
+
+      if (p.isCancel(result)) {
+        return
+      }
+
       oldName = result as string
     }
 
     if (!newName) {
+      if (!isInteractive()) {
+        error('New profile name is required in non-interactive mode.')
+        process.exitCode = 1
+
+        return
+      }
+
       const result = await p.text({
         message: 'New name',
-        validate: (v) => (!v ? 'Required' : undefined),
+        validate: (v) => (!v ? 'Required' : undefined)
       })
-      if (p.isCancel(result)) return
+
+      if (p.isCancel(result)) {
+        return
+      }
+
       newName = result
     }
 
     if (await renameProfile(oldName, newName)) {
-      success(`Profile "${oldName}" renamed to "${newName}"`)
+      if (shouldOutputJson(args)) {
+        json({ success: true, old: oldName, new: newName })
+      } else {
+        success(`Profile "${oldName}" renamed to "${newName}"`)
+      }
     } else {
       error(`Cannot rename: "${oldName}" not found or "${newName}" already exists`)
-      process.exitCode = 1; return
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })
 
 const remove = defineCommand({
   meta: { name: 'remove', description: 'Remove a profile' },
   args: {
     name: { type: 'positional', description: 'Profile to remove', required: false },
+    json: { type: 'boolean', description: 'Output as JSON' }
   },
   async run({ args }) {
     let name = args.name
 
     if (!name) {
       const profiles = await listProfiles()
+
       if (profiles.length === 0) {
         error('No profiles found.')
-        process.exitCode = 1; return
+        process.exitCode = 1
+
+        return
+      }
+
+      if (!isInteractive()) {
+        error('Profile name is required in non-interactive mode.')
+        process.exitCode = 1
+
+        return
       }
 
       const result = await p.select({
         message: 'Select profile to remove',
-        options: profiles.map((pr) => ({ value: pr.name, label: pr.name })),
+        options: profiles.map((pr) => ({ value: pr.name, label: pr.name }))
       })
-      if (p.isCancel(result)) return
+
+      if (p.isCancel(result)) {
+        return
+      }
+
       name = result as string
     }
 
     if (await removeProfile(name)) {
-      success(`Profile "${name}" removed`)
+      if (shouldOutputJson(args)) {
+        json({ success: true, removed: name })
+      } else {
+        success(`Profile "${name}" removed`)
+      }
     } else {
       error(`Profile "${name}" not found`)
-      process.exitCode = 1; return
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })
 
 export default defineCommand({
   meta: { name: 'auth', description: 'Manage authentication profiles' },
-  subCommands: { list, switch: switchProfile, rename, remove },
+  subCommands: { list, switch: switchProfile, rename, remove }
 })
