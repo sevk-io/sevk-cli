@@ -1,15 +1,23 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, json } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, error } from '~/lib/output'
 import { keyValue } from '~/lib/table'
+
+interface Audience {
+  id: string
+  name: string
+  contactsCount?: number
+  createdAt: string
+}
 
 export default defineCommand({
   meta: { name: 'get', description: 'Get audience details' },
   args: {
     ...globalArgs,
-    id: { type: 'positional', description: 'Audience ID', required: true },
+    id: { type: 'positional', description: 'Audience ID', required: true }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
@@ -17,7 +25,7 @@ export default defineCommand({
     try {
       const audience = await withSpinner(
         { start: 'Fetching audience...' },
-        () => client.get<any>(`/audiences/${args.id}`),
+        () => client.get<Audience>(`/audiences/${args.id}`)
       )
 
       if (isJsonOutput(args)) {
@@ -27,14 +35,16 @@ export default defineCommand({
         keyValue([
           ['ID', audience.id],
           ['Name', audience.name],
-          ['Contacts', String(audience._count?.contacts ?? '—')],
-          ['Created', new Date(audience.createdAt).toLocaleString()],
+          ['Contacts', String(audience.contactsCount ?? '-')],
+          ['Created', new Date(audience.createdAt).toLocaleString()]
         ])
         console.log()
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

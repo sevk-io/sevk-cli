@@ -1,8 +1,14 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, json } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, error } from '~/lib/output'
+
+interface WebhookEventsResponse {
+  items: string[]
+  events: Record<string, { name: string, description: string, category: string }>
+}
 
 export default defineCommand({
   meta: { name: 'events', description: 'List available webhook event types' },
@@ -13,24 +19,28 @@ export default defineCommand({
     try {
       const data = await withSpinner(
         { start: 'Fetching events...' },
-        () => client.get<any>('/webhooks/events'),
+        () => client.get<WebhookEventsResponse>('/webhooks/events')
       )
 
       if (isJsonOutput(args)) {
         json(data)
       } else {
-        const events = data.items || []
+        const events = data.items
+
         console.log()
         console.log('  Available webhook events:')
         console.log()
         for (const event of events) {
           console.log(`    ${event}`)
         }
+
         console.log()
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

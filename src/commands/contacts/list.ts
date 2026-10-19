@@ -1,58 +1,123 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, isMenuMode, json } from '~/lib/output'
+import type { PaginationRequest } from '~/lib/pagination'
+import {
+  assertCursorExclusive,
+  interactivePaginate,
+  paginationArgs,
+  paginationQuery,
+  printPaginationInfo
+} from '~/lib/pagination'
 import { withSpinner } from '~/lib/spinner'
-import { json, error, isMenuMode } from '~/lib/output'
 import { table } from '~/lib/table'
-import { paginationArgs, printPaginationInfo, interactivePaginate } from '~/lib/pagination'
+
+interface Contact {
+  id: string
+  email: string
+  subscribed: boolean
+  data?: { firstName?: string, lastName?: string, [k: string]: unknown } | null
+}
+
+interface ContactListResponse {
+  items: Contact[]
+  total?: number
+  hasMore?: boolean
+  nextCursor?: string | null
+  prevCursor?: string | null
+}
 
 const columns = [
   { key: 'id', label: 'ID' },
   { key: 'email', label: 'Email' },
-  { key: 'firstName', label: 'First Name', format: (v: string) => v || '—' },
-  { key: 'lastName', label: 'Last Name', format: (v: string) => v || '—' },
-  { key: 'subscribed', label: 'Subscribed', format: (v: boolean) => v ? 'Yes' : 'No' },
+  { key: 'firstName', label: 'First Name', format: (v: unknown) => typeof v === 'string' && v ? v : '-' },
+  { key: 'lastName', label: 'Last Name', format: (v: unknown) => typeof v === 'string' && v ? v : '-' },
+  { key: 'subscribed', label: 'Subscribed', format: (v: boolean) => v ? 'Yes' : 'No' }
 ]
+
+const flattenItems = (items: Contact[]) =>
+  items.map((c) => ({
+    ...c,
+    firstName: typeof c.data?.firstName === 'string' ? c.data.firstName : undefined,
+    lastName: typeof c.data?.lastName === 'string' ? c.data.lastName : undefined
+  }))
 
 export default defineCommand({
   meta: { name: 'list', description: 'List contacts' },
   args: {
     ...globalArgs,
     ...paginationArgs,
-    search: { type: 'string', description: 'Search by email' },
+    search: { type: 'string', description: 'Search by email or data' },
+    'exclude-audience': { type: 'string', description: 'Exclude contacts in this audience' },
+    subscribed: { type: 'boolean', description: 'Filter by subscription state' }
   },
   async run({ args }) {
-    const client = await createClient(getClientOpts(args))
+    try {
+      assertCursorExclusive(args)
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
 
-    if (isJsonOutput(args)) {
-      const result = await withSpinner(
-        { start: 'Fetching contacts...' },
-        () => client.get<any>('/contacts', { page: args.page, limit: args.limit, search: args.search }),
-      )
-      json(result)
       return
     }
 
-    if (isMenuMode()) {
-      await interactivePaginate({
-        fetch: (page, limit) => client.get<any>('/contacts', { page, limit, search: args.search }),
-        render: (items) => table(items, columns),
-        limit: Number(args.limit || 20),
-        startPage: Number(args.page || 1),
-      })
-      return
+    const client = await createClient(getClientOpts(args))
+
+    const buildQuery = (pagination: PaginationRequest) => {
+      const q = paginationQuery(pagination)
+
+      if (args.search) {
+        q.search = args.search
+      }
+
+      if (args['exclude-audience']) {
+        q.excludeAudience = args['exclude-audience']
+      }
+
+      if (args.subscribed !== undefined) {
+        q.subscribed = args.subscribed
+      }
+
+      return q
     }
 
     try {
+      if (isJsonOutput(args)) {
+        const result = await withSpinner(
+          { start: 'Fetching contacts...' },
+          () => client.get<ContactListResponse>('/contacts', buildQuery(args))
+        )
+
+        json(result)
+
+        return
+      }
+
+      if (isMenuMode()) {
+        await interactivePaginate({
+          fetch: pagination => client.get<ContactListResponse>('/contacts', buildQuery(pagination)),
+          render: (items) => table(flattenItems(items), columns),
+          limit: Number(args.limit || 20),
+          args
+        })
+
+        return
+      }
+
       const result = await withSpinner(
         { start: 'Fetching contacts...' },
-        () => client.get<any>('/contacts', { page: args.page, limit: args.limit, search: args.search }),
+        () => client.get<ContactListResponse>('/contacts', buildQuery(args))
       )
-      table(Array.isArray(result.items || result) ? (result.items || result) : [], columns)
-      printPaginationInfo('sevk contacts list', args, result.total)
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+
+      table(flattenItems(result.items), columns)
+      printPaginationInfo('sevk contacts list', args, result)
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

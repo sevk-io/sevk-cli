@@ -1,15 +1,27 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, json } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, error } from '~/lib/output'
 import { keyValue } from '~/lib/table'
+
+interface Contact {
+  id: string
+  email: string
+  subscribed: boolean
+  data?: { firstName?: string, lastName?: string, [k: string]: unknown } | null
+  createdAt: string
+}
+
+const contactName = (value: unknown): string =>
+  typeof value === 'string' && value ? value : '-'
 
 export default defineCommand({
   meta: { name: 'get', description: 'Get contact details' },
   args: {
     ...globalArgs,
-    id: { type: 'positional', description: 'Contact ID', required: true },
+    id: { type: 'positional', description: 'Contact ID', required: true }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
@@ -17,7 +29,7 @@ export default defineCommand({
     try {
       const contact = await withSpinner(
         { start: 'Fetching contact...' },
-        () => client.get<any>(`/contacts/${args.id}`),
+        () => client.get<Contact>(`/contacts/${args.id}`)
       )
 
       if (isJsonOutput(args)) {
@@ -27,16 +39,18 @@ export default defineCommand({
         keyValue([
           ['ID', contact.id],
           ['Email', contact.email],
-          ['First Name', contact.firstName || '—'],
-          ['Last Name', contact.lastName || '—'],
+          ['First Name', contactName(contact.data?.firstName)],
+          ['Last Name', contactName(contact.data?.lastName)],
           ['Subscribed', contact.subscribed ? 'Yes' : 'No'],
-          ['Created', new Date(contact.createdAt).toLocaleString()],
+          ['Created', new Date(contact.createdAt).toLocaleString()]
         ])
         console.log()
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

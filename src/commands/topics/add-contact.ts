@@ -1,16 +1,16 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, json, success } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, success, error } from '~/lib/output'
 
 export default defineCommand({
   meta: { name: 'add-contact', description: 'Add contacts to a topic' },
   args: {
     ...globalArgs,
-    'audience-id': { type: 'string', description: 'Audience ID', required: true },
     id: { type: 'positional', description: 'Topic ID', required: true },
-    contacts: { type: 'string', description: 'Contact IDs (comma-separated)', required: true },
+    contacts: { type: 'string', description: 'Contact IDs (comma-separated)', required: true }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
@@ -19,7 +19,7 @@ export default defineCommand({
     try {
       const result = await withSpinner(
         { start: 'Adding contacts to topic...' },
-        () => client.post<any>(`/audiences/${args['audience-id']}/topics/${args.id}/contacts`, { contactIds }),
+        () => client.post<unknown>(`/topics/${args.id}/contacts`, { contactIds })
       )
 
       if (isJsonOutput(args)) {
@@ -27,9 +27,11 @@ export default defineCommand({
       } else {
         success('Contacts added to topic')
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

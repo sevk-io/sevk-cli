@@ -1,16 +1,39 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, isMenuMode, json } from '~/lib/output'
+import type { PaginationRequest } from '~/lib/pagination'
+import {
+  assertCursorExclusive,
+  interactivePaginate,
+  paginationArgs,
+  paginationQuery,
+  printPaginationInfo
+} from '~/lib/pagination'
 import { withSpinner } from '~/lib/spinner'
-import { json, error, isMenuMode } from '~/lib/output'
 import { table } from '~/lib/table'
-import { paginationArgs, printPaginationInfo, interactivePaginate } from '~/lib/pagination'
+
+interface Template {
+  id: string
+  title: string
+  style?: string | null
+  createdAt: string
+}
+
+interface ListResponse {
+  items: Template[]
+  total?: number
+  hasMore?: boolean
+  nextCursor?: string | null
+  prevCursor?: string | null
+}
 
 const columns = [
   { key: 'id', label: 'ID' },
   { key: 'title', label: 'Title' },
-  { key: 'style', label: 'Style', format: (v: string) => v || '—' },
-  { key: 'createdAt', label: 'Created', format: (v: string) => new Date(v).toLocaleDateString() },
+  { key: 'style', label: 'Style', format: (v: string) => v || '-' },
+  { key: 'createdAt', label: 'Created', format: (v: string) => new Date(v).toLocaleDateString() }
 ]
 
 export default defineCommand({
@@ -18,41 +41,65 @@ export default defineCommand({
   args: {
     ...globalArgs,
     ...paginationArgs,
-    search: { type: 'string', description: 'Search by title' },
+    search: { type: 'string', description: 'Search by title or content' }
   },
   async run({ args }) {
-    const client = await createClient(getClientOpts(args))
+    try {
+      assertCursorExclusive(args)
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
 
-    if (isJsonOutput(args)) {
-      const result = await withSpinner(
-        { start: 'Fetching templates...' },
-        () => client.get<any>('/templates', { page: args.page, limit: args.limit, search: args.search }),
-      )
-      json(result)
       return
     }
 
-    if (isMenuMode()) {
-      await interactivePaginate({
-        fetch: (page, limit) => client.get<any>('/templates', { page, limit, search: args.search }),
-        render: (items) => table(items, columns),
-        limit: Number(args.limit || 20),
-        startPage: Number(args.page || 1),
-      })
-      return
+    const client = await createClient(getClientOpts(args))
+
+    const buildQuery = (pagination: PaginationRequest) => {
+      const q = paginationQuery(pagination)
+
+      if (args.search) {
+        q.search = args.search
+      }
+
+      return q
     }
 
     try {
+      if (isJsonOutput(args)) {
+        const result = await withSpinner(
+          { start: 'Fetching templates...' },
+          () => client.get<ListResponse>('/templates', buildQuery(args))
+        )
+
+        json(result)
+
+        return
+      }
+
+      if (isMenuMode()) {
+        await interactivePaginate<Template>({
+          fetch: pagination => client.get<ListResponse>('/templates', buildQuery(pagination)),
+          render: (items) => table(items, columns),
+          limit: Number(args.limit || 20),
+          args
+        })
+
+        return
+      }
+
       const result = await withSpinner(
         { start: 'Fetching templates...' },
-        () => client.get<any>('/templates', { page: args.page, limit: args.limit, search: args.search }),
+        () => client.get<ListResponse>('/templates', buildQuery(args))
       )
-      const templates = result.items || result
-      table(Array.isArray(templates) ? templates : [], columns)
-      printPaginationInfo('sevk templates list', args, result.total)
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+
+      table(result.items, columns)
+      printPaginationInfo('sevk templates list', args, result)
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

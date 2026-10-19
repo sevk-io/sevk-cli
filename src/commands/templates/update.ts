@@ -1,10 +1,19 @@
-import { defineCommand } from 'citty'
 import { readFile } from 'node:fs/promises'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
-import { createClient } from '~/lib/client'
-import { withSpinner } from '~/lib/spinner'
-import { json, success, error } from '~/lib/output'
 
+import { defineCommand } from 'citty'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
+import { createClient } from '~/lib/client'
+import { parseEnumFlag } from '~/lib/enum-flag'
+import { error, json, success } from '~/lib/output'
+import { withSpinner } from '~/lib/spinner'
+
+interface Template {
+  id: string
+  title: string
+}
+
+const TEMPLATE_STYLES = ['HTML', 'MARKUP'] as const
 
 export default defineCommand({
   meta: { name: 'update', description: 'Update a template' },
@@ -14,33 +23,48 @@ export default defineCommand({
     title: { type: 'string', description: 'Template title' },
     content: { type: 'string', description: 'Template content (HTML or sevk markup)' },
     'content-file': { type: 'string', description: 'Read content from file' },
-    style: { type: 'string', description: 'Template style: HTML or MARKUP' },
+    style: { type: 'string', description: 'Template style: HTML or MARKUP' }
   },
   async run({ args }) {
     const client = await createClient(getClientOpts(args))
-    const body: Record<string, any> = {}
+    const body: Record<string, string> = {}
 
-    if (args.title) body.title = args.title
-    if (args.content) body.content = args.content
-    if (args.style) body.style = args.style
-    if (args['content-file']) {
+    if (args.title !== undefined) {
+      body.title = args.title
+    }
+
+    if (args.content !== undefined) {
+      body.content = args.content
+    }
+
+    if (args.style !== undefined) {
+      try {
+        body.style = parseEnumFlag(args.style, '--style', TEMPLATE_STYLES, {
+          uppercase: true
+        })
+      } catch (err: unknown) {
+        error(err)
+        process.exitCode = 1
+
+        return
+      }
+    }
+
+    if (args['content-file'] !== undefined) {
       try {
         body.content = await readFile(args['content-file'], 'utf-8')
       } catch {
         error(`Cannot read file: ${args['content-file']}`)
-        process.exitCode = 1; return
-      }
-    }
+        process.exitCode = 1
 
-    if (Object.keys(body).length === 0) {
-      error('Nothing to update. Provide at least one field (--title, --content, --style).')
-      process.exitCode = 1; return
+        return
+      }
     }
 
     try {
       const template = await withSpinner(
         { start: 'Updating template...', success: 'Template updated' },
-        () => client.put<any>(`/templates/${args.id}`, body),
+        () => client.put<Template>(`/templates/${args.id}`, body)
       )
 
       if (isJsonOutput(args)) {
@@ -48,9 +72,11 @@ export default defineCommand({
       } else {
         success(`Template updated: ${template.title}`)
       }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

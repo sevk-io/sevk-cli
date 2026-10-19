@@ -3,55 +3,97 @@ import pc from 'picocolors'
 const isCI = !!process.env.CI || !!process.env.GITHUB_ACTIONS
 const isTTY = process.stdout.isTTY && !isCI
 
-const hasJsonFlag = process.argv.includes('--json') || process.argv.includes('-q') || process.argv.includes('--quiet')
+const isTruthyFlag = (flag: string): boolean => {
+  return process.argv.some((a) => {
+    if (a === flag) {
+      return true
+    }
 
-export function isInteractive(): boolean {
+    if (a.startsWith(`${flag}=`)) {
+      const v = a.slice(flag.length + 1).toLowerCase()
+
+      return v !== 'false' && v !== '0' && v !== ''
+    }
+
+    return false
+  })
+}
+
+const hasJsonFlag = isTruthyFlag('--json') || isTruthyFlag('--quiet') || process.argv.includes('-q')
+
+export const isInteractive = (): boolean => {
   return isTTY && !hasJsonFlag
 }
 
 let _menuMode = false
-export function setMenuMode(v: boolean): void { _menuMode = v }
-export function isMenuMode(): boolean { return _menuMode }
 
-export function json(data: unknown): void {
+export const setMenuMode = (v: boolean): void => {
+  _menuMode = v
+}
+
+export const isMenuMode = (): boolean => _menuMode
+
+export const json = (data: unknown): void => {
   console.log(JSON.stringify(data, null, 2))
 }
 
-export function success(message: string): void {
+export const success = (message: string): void => {
   if (isInteractive()) {
     console.log(pc.green(`✓ ${message}`))
   }
 }
 
-export function error(message: string): void {
+export const error = (input: unknown): void => {
+  const obj: { message?: string, statusCode?: number, code?: string, fields?: unknown, retryAfter?: number, details?: unknown } =
+    typeof input === 'string'
+      ? { message: input }
+      : input && typeof input === 'object'
+        ? input as { message?: string, statusCode?: number, code?: string, fields?: unknown, retryAfter?: number, details?: unknown }
+        : { message: String(input) }
+  const message = obj.message || 'Unknown error'
+
   if (isInteractive()) {
-    console.error(pc.red(`✗ ${message}`))
+    const retry = obj.retryAfter === undefined ? '' : ` (retry after ${obj.retryAfter}s)`
+    console.error(pc.red(`✗ ${message}${retry}`))
   } else {
-    console.error(JSON.stringify({ error: { message } }))
+    const payload: Record<string, unknown> = { message }
+
+    if (obj.statusCode !== undefined) {
+      payload.statusCode = obj.statusCode
+    }
+
+    if (obj.code !== undefined) {
+      payload.code = obj.code
+    }
+
+    if (obj.fields !== undefined) {
+      payload.fields = obj.fields
+    }
+
+    if (obj.retryAfter !== undefined) {
+      payload.retryAfter = obj.retryAfter
+    }
+
+    if (obj.details !== undefined) {
+      payload.details = obj.details
+    }
+
+    console.error(JSON.stringify({ error: payload }))
   }
 }
 
-export function warn(message: string): void {
+export const warn = (message: string): void => {
   if (isInteractive()) {
     console.warn(pc.yellow(`! ${message}`))
   }
 }
 
-export function info(message: string): void {
+export const info = (message: string): void => {
   if (isInteractive()) {
     console.log(pc.dim(message))
   }
 }
 
-export function formatDate(date: string | Date): string {
-  return new Date(date).toLocaleString()
-}
-
-export function truncate(str: string, max: number): string {
-  if (str.length <= max) return str
-  return str.slice(0, max - 1) + '…'
-}
-
-export function shouldOutputJson(opts: { json?: boolean; quiet?: boolean }): boolean {
+export const shouldOutputJson = (opts: { json?: boolean, quiet?: boolean }): boolean => {
   return !!opts.json || !!opts.quiet || !isInteractive()
 }

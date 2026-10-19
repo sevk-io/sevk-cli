@@ -1,8 +1,9 @@
 import { defineCommand } from 'citty'
-import { globalArgs, getClientOpts, isJsonOutput } from '~/lib/args'
+
+import { getClientOpts, globalArgs, isJsonOutput } from '~/lib/args'
 import { createClient } from '~/lib/client'
+import { error, json } from '~/lib/output'
 import { withSpinner } from '~/lib/spinner'
-import { json, error } from '~/lib/output'
 import { table } from '~/lib/table'
 
 export default defineCommand({
@@ -14,26 +15,25 @@ export default defineCommand({
     try {
       const result = await withSpinner(
         { start: 'Fetching regions...' },
-        () => client.get<any>('/domains/regions'),
+        () => client.get<{ items: string[] }>('/domains/regions')
       )
 
-      const regions = result.items || result
+      const regions = result.items
 
       if (isJsonOutput(args)) {
-        json(regions)
+        json(result)
+
         return
       }
 
-      if (Array.isArray(regions)) {
-        table(regions.map((r: string) => ({ region: r })), [
-          { key: 'region', label: 'Region' },
-        ])
-      } else {
-        json(regions)
-      }
-    } catch (err: any) {
-      error(err.message)
-      process.exitCode = 1; return
+      table(regions.map((r) => ({ region: r })), [
+        { key: 'region', label: 'Region' }
+      ])
+    } catch (err: unknown) {
+      error(err)
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })

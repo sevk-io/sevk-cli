@@ -1,32 +1,55 @@
 #!/usr/bin/env node
-import { defineCommand, runMain, runCommand } from 'citty'
+import { exec } from 'node:child_process'
+
+import { settings } from '@clack/core'
+import * as p from '@clack/prompts'
+import {
+  type CommandDef,
+  defineCommand,
+  runCommand,
+  runMain
+} from 'citty'
+import pc from 'picocolors'
+
 import { version } from '../package.json'
+import activity from './commands/activity/index'
+import audiences from './commands/audiences/index'
+import auth from './commands/auth'
+import broadcasts from './commands/broadcasts/index'
+import config from './commands/config'
+import contacts from './commands/contacts/index'
+import doctor from './commands/doctor'
+import domains from './commands/domains/index'
+import emails from './commands/emails/index'
+import inbound from './commands/inbound/index'
 import login from './commands/login'
 import logout from './commands/logout'
-import whoami from './commands/whoami'
-import auth from './commands/auth'
-import config from './commands/config'
-import emails from './commands/emails/index'
-import domains from './commands/domains/index'
-import contacts from './commands/contacts/index'
-import audiences from './commands/audiences/index'
-import broadcasts from './commands/broadcasts/index'
-import templates from './commands/templates/index'
-import topics from './commands/topics/index'
+import markup from './commands/markup/index'
+import outbound from './commands/outbound/index'
 import segments from './commands/segments/index'
 import subscriptions from './commands/subscriptions/index'
-import generate from './commands/generate'
+import templates from './commands/templates/index'
+import topics from './commands/topics/index'
 import usage from './commands/usage'
-import events from './commands/events/index'
 import webhooks from './commands/webhooks/index'
-import markup from './commands/markup/index'
-import doctor from './commands/doctor'
-import * as p from '@clack/prompts'
-import { settings } from '@clack/core'
-import pc from 'picocolors'
-import { exec } from 'node:child_process'
-import { isInteractive, setMenuMode } from './lib/output'
+import whoami from './commands/whoami'
+import { assertKnownOptions, normalizeGlobalArgs } from './lib/cli-args'
 import { createClient } from './lib/client'
+import { error, isInteractive, setMenuMode } from './lib/output'
+
+interface CommandRef {
+  subCommands?: Record<string, CommandRef>
+  meta?: { name?: string, description?: string }
+  run?: (...args: unknown[]) => unknown
+}
+
+const asRef = (cmd: unknown): CommandRef => cmd as CommandRef
+const asCmd = (ref: CommandRef): CommandDef => ({
+  meta: ref.meta,
+  run: ref.run
+    ? context => ref.run?.(context)
+    : undefined
+})
 
 const subCommands = {
   login,
@@ -43,24 +66,24 @@ const subCommands = {
   topics,
   segments,
   subscriptions,
-  generate,
   usage,
-  events,
+  activity,
   webhooks,
+  inbound,
+  outbound,
   markup,
-  doctor,
+  doctor
 }
 
-// Map of group → sub-actions with their command references
-const directCommands: Record<string, any> = {
-  generate,
-  usage,
-  doctor,
-  whoami,
+const directCommands: Record<string, CommandRef> = {
+  usage: asRef(usage),
+  doctor: asRef(doctor),
+  whoami: asRef(whoami)
 }
 
-type Pick = { endpoint: string; labelKey: string; hintKey?: string }
-type Action = { value: string; label: string; arg?: string; argHint?: string; pick?: Pick }
+type Pick = { endpoint: string, labelKey: string, hintKey?: string }
+type Action = { value: string, label: string, arg?: string, argHint?: string, argFlag?: string, pick?: Pick }
+type SelectOption = { value: string, label: string, hint?: string }
 
 const pickDomain: Pick = { endpoint: '/domains', labelKey: 'domain' }
 const pickContact: Pick = { endpoint: '/contacts', labelKey: 'email' }
@@ -68,30 +91,33 @@ const pickAudience: Pick = { endpoint: '/audiences', labelKey: 'name' }
 const pickBroadcast: Pick = { endpoint: '/broadcasts', labelKey: 'name', hintKey: 'status' }
 const pickTemplate: Pick = { endpoint: '/templates', labelKey: 'title' }
 const pickWebhook: Pick = { endpoint: '/webhooks', labelKey: 'url' }
-// pickTopic and pickSegment are dynamic — built per-audience in the nested loop
+const pickInboundEmail: Pick = { endpoint: '/inbound', labelKey: 'subject', hintKey: 'fromAddress' }
 
-const groupedCommands: Record<string, { actions: Action[]; ref: any }> = {
+const groupedCommands: Record<string, { actions: Action[], ref: CommandRef }> = {
   emails: {
-    ref: emails,
+    ref: asRef(emails),
     actions: [
       { value: 'send', label: 'Send an email' },
       { value: 'bulk', label: 'Send bulk emails', arg: 'File path', argHint: 'emails.json' },
-    ],
+      { value: 'update', label: 'Reschedule an email', arg: 'Email ID' },
+      { value: 'cancel', label: 'Cancel a scheduled email', arg: 'Email ID' }
+    ]
   },
   contacts: {
-    ref: contacts,
+    ref: asRef(contacts),
     actions: [
       { value: 'list', label: 'List contacts' },
       { value: 'create', label: 'Create a contact' },
       { value: 'get', label: 'Get contact details', pick: pickContact },
       { value: 'update', label: 'Update a contact', pick: pickContact },
       { value: 'delete', label: 'Delete a contact', pick: pickContact },
-      { value: 'import', label: 'Import contacts', arg: 'File path', argHint: 'contacts.csv' },
-      { value: 'events', label: 'View contact events', pick: pickContact },
-    ],
+      { value: 'bulk-import', label: 'Import contacts', arg: 'File path', argHint: 'contacts.csv' },
+      { value: 'bulk-update', label: 'Bulk update contacts', arg: 'File path', argHint: 'contacts.json' },
+      { value: 'activity', label: 'View contact activity', pick: pickContact }
+    ]
   },
   audiences: {
-    ref: audiences,
+    ref: asRef(audiences),
     actions: [
       { value: 'list', label: 'List audiences' },
       { value: 'create', label: 'Create an audience' },
@@ -99,11 +125,11 @@ const groupedCommands: Record<string, { actions: Action[]; ref: any }> = {
       { value: 'update', label: 'Update an audience', pick: pickAudience },
       { value: 'delete', label: 'Delete an audience', pick: pickAudience },
       { value: '_topics', label: '🏷️ Manage topics' },
-      { value: '_segments', label: '🎯 Manage segments' },
-    ],
+      { value: '_segments', label: '🎯 Manage segments' }
+    ]
   },
   broadcasts: {
-    ref: broadcasts,
+    ref: asRef(broadcasts),
     actions: [
       { value: 'list', label: 'List broadcasts' },
       { value: 'create', label: 'Create a broadcast' },
@@ -111,23 +137,24 @@ const groupedCommands: Record<string, { actions: Action[]; ref: any }> = {
       { value: 'get', label: 'Get broadcast details', pick: pickBroadcast },
       { value: 'analytics', label: 'View analytics', pick: pickBroadcast },
       { value: 'status', label: 'Check status', pick: pickBroadcast },
+      { value: 'estimate-recipients', label: 'Estimate target recipients' },
       { value: 'cancel', label: 'Cancel a broadcast', pick: pickBroadcast },
-      { value: 'delete', label: 'Delete a broadcast', pick: pickBroadcast },
-    ],
+      { value: 'delete', label: 'Delete a broadcast', pick: pickBroadcast }
+    ]
   },
   templates: {
-    ref: templates,
+    ref: asRef(templates),
     actions: [
       { value: 'list', label: 'List templates' },
       { value: 'create', label: 'Create a template' },
       { value: 'get', label: 'Get template details', pick: pickTemplate },
       { value: 'update', label: 'Update a template', pick: pickTemplate },
       { value: 'duplicate', label: 'Duplicate a template', pick: pickTemplate },
-      { value: 'delete', label: 'Delete a template', pick: pickTemplate },
-    ],
+      { value: 'delete', label: 'Delete a template', pick: pickTemplate }
+    ]
   },
   domains: {
-    ref: domains,
+    ref: asRef(domains),
     actions: [
       { value: 'list', label: 'List domains' },
       { value: 'create', label: 'Add a domain' },
@@ -135,125 +162,179 @@ const groupedCommands: Record<string, { actions: Action[]; ref: any }> = {
       { value: 'verify', label: 'Verify a domain', pick: pickDomain },
       { value: 'dns-records', label: 'View DNS records', pick: pickDomain },
       { value: 'regions', label: 'List regions' },
-      { value: 'delete', label: 'Delete a domain', pick: pickDomain },
-    ],
+      { value: 'delete', label: 'Delete a domain', pick: pickDomain }
+    ]
   },
   webhooks: {
-    ref: webhooks,
+    ref: asRef(webhooks),
     actions: [
       { value: 'list', label: 'List webhooks' },
       { value: 'create', label: 'Create a webhook' },
       { value: 'get', label: 'Get webhook details', pick: pickWebhook },
       { value: 'update', label: 'Update a webhook', pick: pickWebhook },
+      { value: 'rotate', label: 'Rotate signing secret', pick: pickWebhook },
       { value: 'test', label: 'Test a webhook', pick: pickWebhook },
       { value: 'events', label: 'List webhook events' },
-      { value: 'delete', label: 'Delete a webhook', pick: pickWebhook },
-    ],
+      { value: 'delete', label: 'Delete a webhook', pick: pickWebhook }
+    ]
   },
-  events: {
-    ref: events,
+  inbound: {
+    ref: asRef(inbound),
     actions: [
-      { value: 'list', label: 'List events' },
-      { value: 'stats', label: 'View event stats' },
-    ],
+      { value: 'list', label: 'List inbound emails' },
+      { value: 'get', label: 'Get inbound email details', pick: pickInboundEmail },
+      { value: 'delete', label: 'Delete an inbound email', pick: pickInboundEmail },
+      { value: 'stats', label: 'Show inbound stats' }
+    ]
+  },
+  outbound: {
+    ref: asRef(outbound),
+    actions: [
+      { value: 'quota_get', label: '📊 Show outbound quota' },
+      { value: 'quota_update', label: '✏️ Update user-set cap', arg: 'Monthly email limit (positive integer, or "null" to clear)', argHint: 'e.g. 10000 or null', argFlag: 'monthly-limit' },
+      { value: 'quota_reset', label: '▶ Resume sending' },
+      { value: 'quota_reset-limit', label: '♻️ Reset limit usage' },
+      { value: 'quota_pause', label: '⏸ Pause sending' }
+    ]
+  },
+  activity: {
+    ref: asRef(activity),
+    actions: [
+      { value: 'list', label: 'List activity' },
+      { value: 'stats', label: 'View activity stats' }
+    ]
   },
   topics: {
-    ref: topics,
+    ref: asRef(topics),
     actions: [
       { value: 'list', label: 'List topics' },
       { value: 'create', label: 'Create a topic' },
       { value: 'get', label: 'Get topic details', pick: { endpoint: '', labelKey: 'name' } },
       { value: 'update', label: 'Update a topic', pick: { endpoint: '', labelKey: 'name' } },
-      { value: 'delete', label: 'Delete a topic', pick: { endpoint: '', labelKey: 'name' } },
-    ],
+      { value: 'delete', label: 'Delete a topic', pick: { endpoint: '', labelKey: 'name' } }
+    ]
   },
   segments: {
-    ref: segments,
+    ref: asRef(segments),
     actions: [
       { value: 'list', label: 'List segments' },
       { value: 'create', label: 'Create a segment' },
       { value: 'get', label: 'Get segment details', pick: { endpoint: '', labelKey: 'name' } },
       { value: 'calculate', label: 'Calculate segment size', pick: { endpoint: '', labelKey: 'name' } },
-      { value: 'delete', label: 'Delete a segment', pick: { endpoint: '', labelKey: 'name' } },
-    ],
+      { value: 'delete', label: 'Delete a segment', pick: { endpoint: '', labelKey: 'name' } }
+    ]
   },
   subscriptions: {
-    ref: subscriptions,
+    ref: asRef(subscriptions),
     actions: [
       { value: 'subscribe', label: 'Subscribe a contact' },
-      { value: 'unsubscribe', label: 'Unsubscribe a contact' },
-    ],
+      { value: 'unsubscribe', label: 'Unsubscribe a contact' }
+    ]
   },
   markup: {
-    ref: markup,
+    ref: asRef(markup),
     actions: [
       { value: 'render', label: 'Render markup to HTML' },
-      { value: 'variables', label: 'List variables in markup', arg: 'File path', argHint: 'template.sevk' },
-    ],
+      { value: 'variables', label: 'List variables in markup', arg: 'File path', argHint: 'template.sevk' }
+    ]
   },
   config: {
-    ref: config,
+    ref: asRef(config),
     actions: [
       { value: 'show', label: 'Show current configuration' },
       { value: 'set-url', label: 'Set API base URL' },
-      { value: 'remove-url', label: 'Remove custom base URL' },
-    ],
-  },
+      { value: 'remove-url', label: 'Remove custom base URL' }
+    ]
+  }
 }
 
-async function pickResource(pick: Pick): Promise<string | null> {
+const pickResource = async (pick: Pick): Promise<string | null> => {
   try {
     const client = await createClient({})
     let page = 1
     const limit = 20
+    let after: string | undefined
+    const history: Array<string | undefined> = []
 
     while (true) {
-      const result = await client.get<any>(pick.endpoint, { page, limit })
-      const items = result.items || result
-      const total = result.total || 0
-      const totalPages = Math.ceil(total / limit) || 1
+      const result = await client.get<{
+        items?: unknown
+        hasMore?: boolean
+        nextCursor?: string | null
+      }>(pick.endpoint, { limit, after })
+      const items = result.items
 
       if (!Array.isArray(items) || items.length === 0) {
         console.log(pc.yellow('  No items found.'))
+
         return null
       }
 
-      const options: any[] = items.map((item: any) => ({
-        value: item.id,
-        label: item[pick.labelKey] || item.id,
-        hint: pick.hintKey ? item[pick.hintKey] : item.id,
-      }))
+      const options: SelectOption[] = (items as Record<string, unknown>[]).map((item) => {
+        const id = item.id as string
+        const hintRaw = pick.hintKey ? item[pick.hintKey] : id
 
-      if (totalPages > 1) {
-        if (page > 1) options.push({ value: '__prev__', label: `← Page ${page - 1}` })
-        if (page < totalPages) options.push({ value: '__next__', label: `→ Page ${page + 1}`, hint: `${page}/${totalPages}` })
+        return {
+          value: id,
+          label: (item[pick.labelKey] as string) || id,
+          hint: hintRaw as string | undefined
+        }
+      })
+
+      if (history.length > 0) {
+        options.push({ value: '__prev__', label: `← Page ${page - 1}` })
       }
+
+      if (result.hasMore && result.nextCursor) {
+        options.push({ value: '__next__', label: `→ Page ${page + 1}`, hint: `Page ${page}` })
+      }
+
       options.push({ value: 'back', label: '← Back' })
 
       const selected = await p.select({
-        message: totalPages > 1 ? `Select (${page}/${totalPages})` : 'Select',
-        options,
+        message: history.length > 0 || result.hasMore ? `Select (Page ${page})` : 'Select',
+        options
       })
 
-      if (p.isCancel(selected) || selected === 'back') return null
-      if (selected === '__prev__') { page--; continue }
-      if (selected === '__next__') { page++; continue }
+      if (p.isCancel(selected) || selected === 'back') {
+        return null
+      }
+
+      if (selected === '__prev__') {
+        after = history.pop()
+        page--
+        continue
+      }
+
+      if (selected === '__next__' && result.nextCursor) {
+        history.push(after)
+        after = result.nextCursor
+        page++
+        continue
+      }
+
       return selected as string
     }
-  } catch (err: any) {
-    console.log(pc.red(`  ✗ ${err.message}`))
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+
+    console.log(pc.red(`  ✗ ${message}`))
+
     return null
   }
 }
 
-async function safeRunCommand(cmd: any, opts: { rawArgs: string[] }): Promise<void> {
+const safeRunCommand = async (cmd: CommandRef, opts: { rawArgs: string[] }): Promise<void> => {
   try {
-    await runCommand(cmd, opts)
-  } catch {}
-  process.exitCode = undefined as any
+    await runCommand(asCmd(cmd), opts)
+  } catch (err: unknown) {
+    error(err)
+  }
+
+  process.exitCode = undefined
 }
 
-function waitForEnter(): Promise<void> {
+const waitForEnter = (): Promise<void> => {
   return new Promise((resolve) => {
     console.log()
     console.log(pc.dim('  ← Enter to go back'))
@@ -271,20 +352,23 @@ const main = defineCommand({
   meta: {
     name: 'sevk',
     version,
-    description: 'sevk CLI - Manage your email infrastructure from the terminal',
+    description: 'sevk CLI - Manage your email infrastructure from the terminal'
   },
   subCommands,
   async run({ rawArgs }) {
-    if (!isInteractive()) return
-    // If a sub-command was passed (e.g. `sevk usage`), don't show interactive menu
-    if (rawArgs && rawArgs.length > 0) return
+    if (!isInteractive()) {
+      return
+    }
+
+    if (rawArgs && rawArgs.length > 0) {
+      return
+    }
 
     process.on('SIGINT', () => {
       console.log()
       process.exit(0)
     })
 
-    // Disable ESC as cancel to prevent stdin corruption on Bun
     settings.aliases.delete('escape')
 
     setMenuMode(true)
@@ -304,17 +388,18 @@ const main = defineCommand({
           { value: 'templates', label: '📝 Templates', hint: 'Manage templates' },
           { value: 'domains', label: '🌐 Domains', hint: 'Manage domains' },
           { value: 'webhooks', label: '🔗 Webhooks', hint: 'Manage webhooks' },
-          { value: 'events', label: '📊 Events', hint: 'View event logs' },
+          { value: 'inbound', label: '📥 Inbound', hint: 'Manage incoming email' },
+          { value: 'outbound', label: '📤 Outbound', hint: 'Manage outbound quota & pause' },
+          { value: 'activity', label: '📊 Activity', hint: 'View activity logs' },
           { value: 'subscriptions', label: '🔔 Subscriptions', hint: 'Subscribe/unsubscribe' },
-          { value: 'generate', label: '✨ Generate', hint: 'Generate email with AI' },
           { value: 'markup', label: '🖼️ Markup', hint: 'Render sevk Markup' },
           { value: 'usage', label: '📈 Usage', hint: 'View usage & limits' },
           { value: 'doctor', label: '🩺 Doctor', hint: 'Check environment' },
           { value: 'config', label: '⚙️ Config', hint: 'Manage CLI settings' },
           { value: 'whoami', label: '🔑 Who Am I', hint: 'Show auth status' },
           { value: 'bugreport', label: '🐛 Bug Report', hint: 'Report an issue' },
-          { value: 'exit', label: '👋 Exit' },
-        ],
+          { value: 'exit', label: '👋 Exit' }
+        ]
       })
 
       if (p.isCancel(group) || group === 'exit') {
@@ -325,20 +410,23 @@ const main = defineCommand({
 
       const key = group as string
 
-      // Bug report
       if (key === 'bugreport') {
         const description = await p.text({
           message: 'Describe the issue',
           placeholder: 'What went wrong?',
-          validate: (v) => (!v ? 'Required' : undefined),
+          validate: (v) => (!v ? 'Required' : undefined)
         })
-        if (p.isCancel(description)) continue
+
+        if (p.isCancel(description)) {
+          continue
+        }
 
         const subject = encodeURIComponent(`[CLI Bug] ${(description as string).slice(0, 50)}`)
         const body = encodeURIComponent(`**Description:**\n${description}\n\n**CLI Version:** ${version}\n**Platform:** ${process.platform} ${process.arch}\n**Runtime:** ${typeof Bun !== 'undefined' ? 'Bun' : 'Node.js'} ${process.version}`)
         const url = `mailto:dev@sevk.io?subject=${subject}&body=${body}`
 
         const openCmd = process.platform === 'win32' ? 'start ""' : process.platform === 'darwin' ? 'open' : 'xdg-open'
+
         exec(`${openCmd} "${url}"`)
 
         console.log()
@@ -348,80 +436,37 @@ const main = defineCommand({
         continue
       }
 
-      // Direct commands
       if (directCommands[key]) {
         await safeRunCommand(directCommands[key], { rawArgs: [] })
         await waitForEnter()
         continue
       }
 
-      // Topics/Segments require audience selection first
-      if (key === 'topics' || key === 'segments') {
-        const audienceId = await pickResource(pickAudience)
-        if (!audienceId) continue
+      const grouped = groupedCommands[key]
 
-        const subGroup = key
-        const nestedActions = groupedCommands[subGroup].actions
-
-        nestedLoop2: while (true) {
-          const subAction = await p.select({
-            message: `${subGroup} →`,
-            options: [
-              ...nestedActions.map(a => ({ value: a.value, label: a.label })),
-              { value: 'back', label: '← Back' },
-            ],
-          })
-
-          if (p.isCancel(subAction) || subAction === 'back') break nestedLoop2
-
-          const nestedDef = nestedActions.find(a => a.value === subAction)
-          const ref = subGroup === 'topics' ? topics : segments
-          const subCmd = (ref as any).subCommands?.[subAction as string]
-          if (subCmd) {
-            let rawArgs: string[] = ['--audience-id', audienceId]
-            if (nestedDef?.pick) {
-              const dynamicPick: Pick = {
-                endpoint: `/audiences/${audienceId}/${subGroup}`,
-                labelKey: nestedDef.pick.labelKey,
-              }
-              const id = await pickResource(dynamicPick)
-              if (!id) continue nestedLoop2
-              rawArgs.push(id)
-            } else if (nestedDef?.arg) {
-              const argValue = await p.text({
-                message: nestedDef.arg,
-                placeholder: nestedDef.argHint || '',
-                validate: (v) => (!v ? 'Required' : undefined),
-              })
-              if (p.isCancel(argValue)) continue nestedLoop2
-              rawArgs.push(argValue as string)
-            }
-            await safeRunCommand(subCmd, { rawArgs })
-            await waitForEnter()
-          }
-        }
+      if (!grouped) {
         continue
       }
-
-      // Grouped commands
-      const grouped = groupedCommands[key]
-      if (!grouped) continue
 
       actionLoop: while (true) {
         const action = await p.select({
           message: `${key} →`,
           options: [
             ...grouped.actions.map(a => ({ value: a.value, label: a.label })),
-            { value: 'back', label: '← Back' },
-          ],
+            { value: 'back', label: '← Back' }
+          ]
         })
 
-        if (p.isCancel(action) || action === 'back') break
+        if (p.isCancel(action) || action === 'back') {
+          break
+        }
 
-        // Handle nested audience sub-menus (topics/segments)
         if (action === '_topics' || action === '_segments') {
           const audienceId = await pickResource(pickAudience)
-          if (!audienceId) continue actionLoop
+
+          if (!audienceId) {
+            continue actionLoop
+          }
 
           const subGroup = action === '_topics' ? 'topics' : 'segments'
           const nestedActions = groupedCommands[subGroup].actions
@@ -431,59 +476,99 @@ const main = defineCommand({
               message: `${subGroup} →`,
               options: [
                 ...nestedActions.map(a => ({ value: a.value, label: a.label })),
-                { value: 'back', label: '← Back' },
-              ],
+                { value: 'back', label: '← Back' }
+              ]
             })
 
-            if (p.isCancel(subAction) || subAction === 'back') break nestedLoop
+            if (p.isCancel(subAction) || subAction === 'back') {
+              break nestedLoop
+            }
 
             const nestedDef = nestedActions.find(a => a.value === subAction)
-            const ref = subGroup === 'topics' ? topics : segments
-            const subCmd = (ref as any).subCommands?.[subAction as string]
+            const ref = asRef(subGroup === 'topics' ? topics : segments)
+            const subCmd = ref.subCommands?.[subAction as string]
+
             if (subCmd) {
-              let rawArgs: string[] = ['--audience-id', audienceId]
+              const rawArgs: string[] = ['--audience-id', audienceId]
+
               if (nestedDef?.pick) {
                 const dynamicPick: Pick = {
                   endpoint: `/audiences/${audienceId}/${subGroup}`,
-                  labelKey: nestedDef.pick.labelKey,
+                  labelKey: nestedDef.pick.labelKey
                 }
                 const id = await pickResource(dynamicPick)
-                if (!id) continue nestedLoop
+
+                if (!id) {
+                  continue nestedLoop
+                }
+
                 rawArgs.push(id)
               } else if (nestedDef?.arg) {
                 const argValue = await p.text({
                   message: nestedDef.arg,
                   placeholder: nestedDef.argHint || '',
-                  validate: (v) => (!v ? 'Required' : undefined),
+                  validate: (v) => (!v ? 'Required' : undefined)
                 })
-                if (p.isCancel(argValue)) continue nestedLoop
+
+                if (p.isCancel(argValue)) {
+                  continue nestedLoop
+                }
+
                 rawArgs.push(argValue as string)
               }
+
               await safeRunCommand(subCmd, { rawArgs })
               await waitForEnter()
             }
           }
+
           continue actionLoop
         }
 
-        // Run the sub-command
         const actionDef = grouped.actions.find(a => a.value === action)
-        const subCmd = (grouped.ref as any).subCommands?.[action as string]
+        let subCmd: CommandRef | undefined = grouped.ref.subCommands?.[action as string]
+
+        if (!subCmd && typeof action === 'string' && action.includes('_')) {
+          const segments = (action as string).split('_')
+          let cursor: CommandRef | undefined = grouped.ref
+
+          for (const seg of segments) {
+            cursor = cursor?.subCommands?.[seg]
+            if (!cursor) {
+              break
+            }
+          }
+
+          if (cursor) {
+            subCmd = cursor
+          }
+        }
+
         if (subCmd) {
           let rawArgs: string[] = []
 
           if (actionDef?.pick) {
             const id = await pickResource(actionDef.pick)
-            if (!id) continue actionLoop
+
+            if (!id) {
+              continue actionLoop
+            }
+
             rawArgs = [id]
           } else if (actionDef?.arg) {
             const argValue = await p.text({
               message: actionDef.arg,
               placeholder: actionDef.argHint || '',
-              validate: (v) => (!v ? 'Required' : undefined),
+              validate: (v) => (!v ? 'Required' : undefined)
             })
-            if (p.isCancel(argValue)) continue actionLoop
-            rawArgs = [argValue as string]
+
+            if (p.isCancel(argValue)) {
+              continue actionLoop
+            }
+
+            rawArgs = actionDef.argFlag
+              ? [`--${actionDef.argFlag}`, argValue as string]
+              : [argValue as string]
           }
 
           await safeRunCommand(subCmd, { rawArgs })
@@ -491,7 +576,15 @@ const main = defineCommand({
         }
       }
     }
-  },
+  }
 })
 
-runMain(main)
+const rawArgs = normalizeGlobalArgs(process.argv.slice(2))
+
+try {
+  assertKnownOptions(main, rawArgs)
+  await runMain(main, { rawArgs })
+} catch (err: unknown) {
+  error(err)
+  process.exitCode = 1
+}

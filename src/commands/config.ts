@@ -1,16 +1,28 @@
-import { defineCommand } from 'citty'
 import * as p from '@clack/prompts'
-import { updateProfileBaseUrl, getProfileBaseUrl, listProfiles } from '~/lib/config'
-import { success, error, json, shouldOutputJson, isInteractive } from '~/lib/output'
-import { keyValue } from '~/lib/table'
+import { defineCommand } from 'citty'
 import pc from 'picocolors'
+
+import {
+  getProfileBaseUrl,
+  listProfiles,
+  updateProfileBaseUrl,
+  validateBaseUrl
+} from '~/lib/config'
+import {
+  error,
+  isInteractive,
+  json,
+  shouldOutputJson,
+  success
+} from '~/lib/output'
+import { keyValue } from '~/lib/table'
 
 const setUrl = defineCommand({
   meta: { name: 'set-url', description: 'Set API base URL for a profile' },
   args: {
     url: { type: 'positional', description: 'API base URL (e.g. https://api.example.com)', required: false },
     profile: { type: 'string', description: 'Profile to update (default: active profile)' },
-    json: { type: 'boolean', description: 'Output as JSON' },
+    json: { type: 'boolean', description: 'Output as JSON' }
   },
   async run({ args }) {
     let url = args.url
@@ -22,21 +34,39 @@ const setUrl = defineCommand({
         placeholder: 'https://api.example.com',
         initialValue: currentUrl,
         validate: (v) => {
-          if (!v) return 'Required'
+          if (!v) {
+            return 'Required'
+          }
+
           try {
             new URL(v)
           } catch {
             return 'Must be a valid URL'
           }
-        },
+        }
       })
-      if (p.isCancel(result)) return
+
+      if (p.isCancel(result)) {
+        return
+      }
+
       url = result
     }
 
     if (!url) {
       error('URL is required.')
-      process.exitCode = 1; return
+      process.exitCode = 1
+
+      return
+    }
+
+    const urlErr = validateBaseUrl(url)
+
+    if (urlErr) {
+      error(urlErr)
+      process.exitCode = 1
+
+      return
     }
 
     if (await updateProfileBaseUrl(args.profile || '', url)) {
@@ -47,16 +77,18 @@ const setUrl = defineCommand({
       }
     } else {
       error('Profile not found.')
-      process.exitCode = 1; return
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })
 
 const removeUrl = defineCommand({
   meta: { name: 'remove-url', description: 'Remove custom base URL (revert to default)' },
   args: {
     profile: { type: 'string', description: 'Profile to update (default: active profile)' },
-    json: { type: 'boolean', description: 'Output as JSON' },
+    json: { type: 'boolean', description: 'Output as JSON' }
   },
   async run({ args }) {
     if (await updateProfileBaseUrl(args.profile || '', null)) {
@@ -67,16 +99,18 @@ const removeUrl = defineCommand({
       }
     } else {
       error('Profile not found.')
-      process.exitCode = 1; return
+      process.exitCode = 1
+
+      return
     }
-  },
+  }
 })
 
 const show = defineCommand({
   meta: { name: 'show', description: 'Show current configuration' },
   args: {
     profile: { type: 'string', description: 'Profile to show (default: active profile)' },
-    json: { type: 'boolean', description: 'Output as JSON' },
+    json: { type: 'boolean', description: 'Output as JSON' }
   },
   async run({ args }) {
     const profiles = await listProfiles()
@@ -87,11 +121,14 @@ const show = defineCommand({
 
     if (!target) {
       error(targetName ? `Profile "${targetName}" not found.` : 'No active profile.')
-      process.exitCode = 1; return
+      process.exitCode = 1
+
+      return
     }
 
     if (shouldOutputJson(args)) {
       json(target)
+
       return
     }
 
@@ -99,13 +136,13 @@ const show = defineCommand({
     keyValue([
       ['Profile', target.name],
       ['Active', target.active ? 'Yes' : 'No'],
-      ['Base URL', target.baseUrl || pc.dim('https://api.sevk.io (default)')],
+      ['Base URL', target.baseUrl || pc.dim('https://api.sevk.io (default)')]
     ])
     console.log()
-  },
+  }
 })
 
 export default defineCommand({
   meta: { name: 'config', description: 'Manage CLI configuration' },
-  subCommands: { show, 'set-url': setUrl, 'remove-url': removeUrl },
+  subCommands: { show, 'set-url': setUrl, 'remove-url': removeUrl }
 })
